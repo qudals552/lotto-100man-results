@@ -1,0 +1,109 @@
+# 매주 로또 당첨번호를 받아 results/latest.json 으로 저장한다.
+# 출처: smok95/lotto 공개 JSON (토요일 밤 9시 전후 갱신, 늦을 수 있음)
+# 이미 받은 회차면 스크립트가 요청 없이 바로 끝나므로, 여러 번 돌아도 출처에 부담이 없다.
+# 사용자 결정(2026-11-25): 이 출처는 GitHub Actions 에서 받아도 된다.
+
+name: lotto-results
+
+on:
+  schedule:
+    # 시간은 UTC. 한국 시간 = UTC + 9
+    - cron: '0,20,40 12-14 * * 6'   # 토 21:00 ~ 23:40 KST, 20분마다
+    - cron: '0,30 15-17 * * 6'      # 토 24:00 ~ 일 02:30 KST, 30분마다
+    - cron: '0 22-23 * * 6'         # 일 07:00 ~ 08:00 KST
+    - cron: '0 0-5 * * 0'           # 일 09:00 ~ 14:00 KST, 1시간마다 (마지막에 실패 알림)
+  workflow_dispatch:
+    inputs:
+      round:
+        description: '수동 입력: 회차 (비우면 자동으로 받기)'
+        required: false
+      numbers:
+        description: '수동 입력: 당첨번호 6개 (예: 3 11 19 27 33 41)'
+        required: false
+      bonus:
+        description: '수동 입력: 보너스 번호'
+        required: false
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: lotto-results
+  cancel-in-progress: false
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 당첨번호 받기
+        id: fetch
+        env:
+          ROUND: ${{ github.event.inputs.round }}
+          NUMBERS: ${{ github.event.inputs.numbers }}
+          BONUS: ${{ github.event.inputs.bonus }}
+        run: |
+          set +e
+          if [ -n "$ROUND" ]; then
+            node scripts/fetch-results.mjs --manual "$ROUND" "$NUMBERS" "$BONUS"
+          else
+            node scripts/fetch-results.mjs
+          fi
+          code=$?
+          # 2 = 아직 안 올라옴: 실패로 치지 않고 다음 예약 때 다시 본다
+          if [ $code -eq 2 ]; then exit 0; fi
+          exit $code
+
+      - name: 저장소에 올리기
+        if: steps.fetch.outputs.status == 'updated'
+        run: |
+          git config user.name 'lotto-results-bot'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add results
+          git commit -m "results: $(node -p "require('./results/latest.json').draw_no")회 당첨번호"
+          git push
+
+      - name: 저장했으면 열린 알림 닫기
+        if: steps.fetch.outputs.status == 'updated'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for n in $(gh issue list --label lotto-results --state open --json number -q '.[].number'); do
+            gh issue close "$n" --comment '당첨번호를 저장해서 닫아요.'
+          done
+
+      # 일요일 14시(KST) 마지막 시도까지 못 받았거나, 검증에 실패하면 알림을 연다 (중복 생성 안 함)
+      - name: 실패 알림
+        if: >-
+          always() && (
+            steps.fetch.outcome == 'failure'
+            || steps.fetch.outputs.status == 'invalid'
+            || steps.fetch.outputs.status == 'error'
+            || (steps.fetch.outputs.status == 'not_yet' && github.event.schedule == '0 0-5 * * 0')
+          )
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STATUS: ${{ steps.fetch.outputs.status }}
+        run: |
+          hour=$((10#$(date -u +%H)))
+          # 아직 안 올라온 경우는 일요일 14시(KST, UTC 05시) 이후 시도에서만 알린다
+          if [ "$STATUS" = "not_yet" ] && [ "$hour" -lt 5 ]; then
+            echo "아직 마지막 시도가 아니에요 (UTC ${hour}시)."; exit 0
+          fi
+          gh label create lotto-results --color FBC400 --description '당첨번호 자동 받기' 2>/dev/null || true
+          if [ -n "$(gh issue list --label lotto-results --state open --json number -q '.[0].number')" ]; then
+            echo '이미 열린 알림이 있어요.'; exit 0
+          fi
+          gh issue create --label lotto-results \
+            --title '이번 주 로또 당첨번호를 자동으로 받지 못했어요' \
+            --body "상태: ${STATUS:-실패}
+
+          Actions 탭 → lotto-results → Run workflow 에서 회차·번호 6개·보너스를 넣으면 바로 저장돼요.
+          동행복권 추첨결과 페이지에서 번호를 확인해 주세요."
