@@ -61,13 +61,20 @@ jobs:
           if [ $code -eq 2 ]; then exit 0; fi
           exit $code
 
+      # 로또 5천만: 당첨번호가 들어온 회차의 5천만 장 채점 + 다음 회차 5천만 장 준비 (각 5초 안팎)
+      - name: 주간 5천만 장
+        id: week
+        if: steps.fetch.outcome == 'success'
+        run: node scripts/week.mjs
+
       - name: 저장소에 올리기
-        if: steps.fetch.outputs.status == 'updated'
+        if: steps.fetch.outputs.status == 'updated' || steps.week.outputs.week_changed == '1'
         run: |
           git config user.name 'lotto-results-bot'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add results
-          git commit -m "results: $(node -p "require('./results/latest.json').draw_no")회 당첨번호"
+          git add results weeks
+          git diff --cached --quiet && { echo '바뀐 게 없어요'; exit 0; }
+          git commit -m "results: $(node -p "require('./results/latest.json').draw_no")회 당첨번호 · 5천만 장"
           git push
 
       - name: 저장했으면 열린 알림 닫기
