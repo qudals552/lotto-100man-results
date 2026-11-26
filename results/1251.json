@@ -11,5 +11,17 @@
   ],
   "bonus": 1,
   "source": "smok95/lotto",
-  "fetched_at": "2026-11-25T14:59:25.462Z"
+  "fetched_at": "2026-11-25T14:59:25.462Z",
+  "winners": [
+    14,
+    96,
+    2851,
+    146963,
+    2505977
+  ],
+  "combo": {
+    "auto": 14,
+    "semi_auto": 0,
+    "manual": 0
+  }
 }
