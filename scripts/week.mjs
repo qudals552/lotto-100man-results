@@ -20,7 +20,7 @@ export function build(round) {
   const t0 = Date.now(), seed = seedOf(round), dr = makeDrawer(seed), a = dr.a;
   const counts = new Uint8Array(TOTAL), freq = new Float64Array(45);
   const SNAP = DRAWS / 40, snaps = [], recent = [0, 0, 0];
-  let lastDup = -1, maxC = 0;
+  let lastDup = -1, maxC = 0, rep = 0;
   for (let d = 0; d < DRAWS; d++) {
     dr.next();
     for (let i = 0; i < 6; i++) freq[a[i]]++;
@@ -28,10 +28,11 @@ export function build(round) {
     if (c < 255) counts[r] = c + 1;
     if (c + 1 > maxC) maxC = c + 1;
     if (c >= 1) lastDup = r;
+    if (c === 1) rep++;
     recent[d % 3] = r;
     if ((d + 1) % SNAP === 0) {
       snaps.push({
-        at: d + 1, top: maxC,
+        at: d + 1, top: maxC, repeated: rep,
         lines: [0, 1, 2].map((k) => { const rr = recent[(d - k + 3) % 3]; return { nums: unrank(rr), count: counts[rr] }; }),
         dup: lastDup >= 0 ? { nums: unrank(lastDup), count: counts[lastDup] } : null,
       });
