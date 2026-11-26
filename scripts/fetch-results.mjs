@@ -68,11 +68,39 @@ async function fetchJson(url) {
   } finally { clearTimeout(t); }
 }
 
+// all.json: 역대 회차 전부를 [회차, 번호6개, 보너스] 배열로 (앱의 "2002년부터 매주 샀다면"용)
+const rowOf = (r) => [r.draw_no, ...r.numbers, r.bonus];
+function rowOk(r, i) {
+  const nums = r.slice(1, 7);
+  return r.length === 8 && r[0] === i + 1 && new Set(nums).size === 6 &&
+    r.slice(1).every((n) => Number.isInteger(n) && n >= 1 && n <= 45) && !nums.includes(r[7]);
+}
+async function ensureAll(upTo) {
+  const p = join(DIR, 'all.json');
+  let rows = (await readJson(p)) || [];
+  if (rows.length >= upTo && rows.every(rowOk)) return false;
+  if (rows.length < upTo - 1 || !rows.every(rowOk)) {
+    // 처음이거나 망가졌으면 출처의 전체 파일로 한 번 다시 만든다
+    const all = await fetchJson(`${SOURCE}all.json`);
+    if (!Array.isArray(all)) throw new Error('all.json 을 받지 못했어요');
+    rows = all.map((d) => [d.draw_no, ...[...d.numbers].sort((a, b) => a - b), d.bonus_no]).sort((a, b) => a[0] - b[0]);
+  }
+  const latest = await readJson(join(DIR, 'latest.json'));
+  if (latest && rows.length === latest.draw_no - 1) rows.push(rowOf(latest));
+  rows = rows.slice(0, upTo);
+  if (!rows.every(rowOk)) throw new Error('all.json 검증 실패');
+  await mkdir(DIR, { recursive: true });
+  await writeFile(p, JSON.stringify(rows));
+  console.log(`all.json 갱신: 1~${rows.length}회`);
+  return true;
+}
+
 async function save(rec) {
   await mkdir(DIR, { recursive: true });
   const body = JSON.stringify(rec, null, 2) + '\n';
   await writeFile(join(DIR, `${rec.draw_no}.json`), body);
   await writeFile(join(DIR, 'latest.json'), body);
+  await ensureAll(rec.draw_no);
 }
 
 async function main() {
@@ -92,6 +120,7 @@ async function main() {
   const round = expectedRound();
   const have = await readJson(join(DIR, 'latest.json'));
   if (have && have.draw_no >= round) {
+    if (await ensureAll(have.draw_no)) { await output('updated'); return; }
     console.log(`${round}회는 이미 저장돼 있어요. 요청하지 않고 끝냅니다.`);
     await output('already');
     return;
