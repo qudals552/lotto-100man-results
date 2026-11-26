@@ -103,6 +103,18 @@ async function save(rec) {
   await ensureAll(rec.draw_no);
 }
 
+// 등수별 당첨자 수와 1등 자동/반자동/수동 (당첨금 금액은 저장하지 않아요)
+function extras(raw) {
+  const out = {};
+  if (Array.isArray(raw.divisions) && raw.divisions.length >= 5 && raw.divisions.slice(0, 5).every((d) => Number.isInteger(d.winners) && d.winners >= 0))
+    out.winners = raw.divisions.slice(0, 5).map((d) => d.winners);
+  if (raw.winners_combination && typeof raw.winners_combination === 'object') {
+    const c = raw.winners_combination;
+    out.combo = { auto: c.auto | 0, semi_auto: c.semi_auto | 0, manual: c.manual | 0 };
+  }
+  return out;
+}
+
 async function main() {
   const args = process.argv.slice(2);
 
@@ -120,7 +132,14 @@ async function main() {
   const round = expectedRound();
   const have = await readJson(join(DIR, 'latest.json'));
   if (have && have.draw_no >= round) {
-    if (await ensureAll(have.draw_no)) { await output('updated'); return; }
+    let changed = await ensureAll(have.draw_no);
+    // 당첨자 수가 아직 없으면 (출처가 번호보다 늦게 채우는 경우 포함) 한 번 더 받아서 채운다
+    if (!have.winners && have.source !== 'manual') {
+      const raw = await fetchJson(`${SOURCE}${have.draw_no}.json`);
+      const ex = raw && raw.draw_no === have.draw_no ? extras(raw) : {};
+      if (ex.winners) { const rec = { ...have, ...ex }; await save(rec); changed = true; console.log(`${have.draw_no}회 당첨자 수 추가: 1등 ${ex.winners[0]}명`); }
+    }
+    if (changed) { await output('updated'); return; }
     console.log(`${round}회는 이미 저장돼 있어요. 요청하지 않고 끝냅니다.`);
     await output('already');
     return;
@@ -145,6 +164,7 @@ async function main() {
     bonus: raw.bonus_no,
     source: 'smok95/lotto',
     fetched_at: new Date(now()).toISOString(),
+    ...extras(raw),
   };
   const errs = validate(rec, round);
   if (errs.length) {
